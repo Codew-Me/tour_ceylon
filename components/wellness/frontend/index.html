@@ -109,6 +109,14 @@
                 <button type="button" id="micBtn" class="mic-btn" onclick="toggleVoiceInput()" title="Speak instead of typing">&#127908;</button>
                 <button type="button" class="symptom-suggest-btn" onclick="suggestConditionFromSymptom()">Suggest</button>
               </div>
+              <div id="voiceLangRow" style="display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap;">
+                <span style="font-size:0.72rem; color:var(--muted);">Speaking in:</span>
+                <button type="button" class="voice-lang-chip active" data-lang="en" onclick="setVoiceLang('en', this)">&#127468;&#127463; EN</button>
+                <button type="button" class="voice-lang-chip" data-lang="de" onclick="setVoiceLang('de', this)">&#127465;&#127466; DE</button>
+                <button type="button" class="voice-lang-chip" data-lang="ru" onclick="setVoiceLang('ru', this)">&#127479;&#127482; RU</button>
+                <button type="button" class="voice-lang-chip" data-lang="zh" onclick="setVoiceLang('zh', this)">&#127464;&#127475; ZH</button>
+                <button type="button" class="voice-lang-chip" data-lang="ja" onclick="setVoiceLang('ja', this)">&#127471;&#127477; JA</button>
+              </div>
               <div id="symptomSuggestResult" style="font-size:0.78rem; margin-top:6px;"></div>
             </div>
             <div class="row2">

@@ -451,42 +451,113 @@ def get_flagged_centers():
 # ---------------------------------------------------------------
 # Symptom-to-Condition Classifier (ML layer, new capability)
 # ---------------------------------------------------------------
-# Trained on 37 expert-informed example symptom descriptions across the
-# 12 real condition categories. HONEST LIMITATION: LOO-CV accuracy is
-# very low (2.7-8.1%) given ~3 examples/class - a genuine small-data
-# problem. Demo predictions on new, clear-cut text were qualitatively
-# correct, suggesting some real signal despite the harsh LOO-CV estimate.
+# Trained on 98 expert-informed example symptom descriptions per language
+# (expanded from an initial 37/language after real user testing found
+# short/simple phrases being misclassified) across the 12 real condition
+# categories. LOO-CV accuracy improved from 2.7-10.8% (n=37/language) to
+# 53.1-65.3% (n=98/language) - a substantial, genuine improvement, though
+# still an imperfect proof-of-concept, not a diagnostic tool.
 # Positioned as an OPTIONAL free-text entry point alongside the existing
 # dropdown, not a replacement for it.
-_symptom_model_cache = None
+#
+# Supports 5 languages, each with its OWN dedicated model trained on
+# native-language example data (not a translation layer over the English
+# model). Chinese/Japanese use character n-gram TF-IDF (no spaces between
+# words in these languages - a word-tokenizer would fail completely).
+#
+# Two separate DOMAINS, each with their own 5-language model set: "ayurveda"
+# (12 medical/wellness conditions) and "spiritual" (6 meditation/retreat
+# types). These are fundamentally different category sets - a classifier
+# trained on medical conditions has no way to correctly suggest a retreat
+# type like "Silent Retreat", and vice versa. Using the wrong domain's
+# model was a real bug found during testing (the Spiritual path's free-text
+# box was suggesting medical conditions like "Migraine" that don't even
+# exist in that path's dropdown) - fixed by training a dedicated second
+# classifier set rather than trying to share one.
+_symptom_model_cache = {}
 
-def _load_symptom_classifier():
-    global _symptom_model_cache
-    if _symptom_model_cache is None:
+SYMPTOM_MODEL_FILES = {
+    "ayurveda": {
+        "en": "symptom_classifier_model.pkl",
+        "de": "symptom_classifier_model_de.pkl",
+        "ru": "symptom_classifier_model_ru.pkl",
+        "zh": "symptom_classifier_model_zh.pkl",
+        "ja": "symptom_classifier_model_ja.pkl",
+    },
+    "spiritual": {
+        "en": "spiritual_classifier_model_en.pkl",
+        "de": "spiritual_classifier_model_de.pkl",
+        "ru": "spiritual_classifier_model_ru.pkl",
+        "zh": "spiritual_classifier_model_zh.pkl",
+        "ja": "spiritual_classifier_model_ja.pkl",
+    },
+}
+
+def _load_symptom_classifier(lang="en", domain="ayurveda"):
+    if domain not in SYMPTOM_MODEL_FILES:
+        domain = "ayurveda"
+    if lang not in SYMPTOM_MODEL_FILES[domain]:
+        lang = "en"
+    cache_key = f"{domain}:{lang}"
+    if cache_key not in _symptom_model_cache:
         import pickle
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symptom_classifier_model.pkl")
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), SYMPTOM_MODEL_FILES[domain][lang])
         with open(model_path, "rb") as f:
-            _symptom_model_cache = pickle.load(f)
-    return _symptom_model_cache
+            _symptom_model_cache[cache_key] = pickle.load(f)
+    return _symptom_model_cache[cache_key]
 
 
-def classify_symptom_text(text):
-    saved = _load_symptom_classifier()
+def classify_symptom_text(text, lang="en", domain="ayurveda"):
+    saved = _load_symptom_classifier(lang, domain)
     vectorizer, model = saved["vectorizer"], saved["model"]
     X = vectorizer.transform([text])
+
+    # HONEST CHECK: each language's classifier only recognizes its OWN
+    # language's vocabulary (5 separate models, not one shared model with
+    # a translation layer). If the input text matches zero REAL features,
+    # there's no real signal, so say so honestly instead of returning the
+    # model's arbitrary default class.
+    #
+    # For character-n-gram models (Chinese/Japanese), sklearn's char_wb
+    # analyzer automatically pads word boundaries with a space before
+    # generating n-grams - even when the input text itself has no spaces -
+    # so a bare whitespace 1-gram can match "by accident" for ANY input,
+    # including completely wrong-language text. That boundary artifact is
+    # not real signal, so it's excluded before checking for a genuine match.
+    feature_names = vectorizer.get_feature_names_out()
+    matched_indices = X.nonzero()[1]
+    real_matches = [i for i in matched_indices if feature_names[i].strip() != ""]
+
+    if len(real_matches) == 0:
+        return {
+            "predicted_condition": None,
+            "confidence": 0.0,
+            "n_training_examples": saved["n_examples"],
+            "no_signal": True,
+            "disclaimer": (
+                "Couldn't match this text to the selected language's vocabulary - "
+                "no suggestion is being shown (rather than guessing). Please check "
+                "the 'Speaking in' language matches what you typed/said, or use "
+                "the dropdown instead."
+            ),
+        }
+
     pred = model.predict(X)[0]
     proba = model.predict_proba(X)[0]
     confidence = float(max(proba))
+    loo_acc_pct = round(saved.get("loo_accuracy", 0) * 100, 1)
+    domain_label = "meditation/retreat type" if domain == "spiritual" else "medical/wellness condition"
     return {
         "predicted_condition": str(pred),
         "confidence": round(confidence, 3),
         "n_training_examples": saved["n_examples"],
+        "no_signal": False,
         "disclaimer": (
-            f"This classifier is trained on only {saved['n_examples']} expert-informed "
-            "examples (~3 per condition) - Leave-One-Out CV accuracy is very low "
-            "(2.7-8.1%). Treat this as an illustrative, optional free-text entry point, "
-            "not a reliable diagnostic tool. Please verify/adjust the suggested condition "
-            "using the dropdown."
+            f"This {domain_label} classifier is trained on {saved['n_examples']} expert-informed "
+            f"examples in this language - Leave-One-Out CV accuracy for this specific model is "
+            f"{loo_acc_pct}%. Still an illustrative, optional free-text entry point, "
+            "not a reliable diagnostic tool. Please verify/adjust the suggested "
+            "condition using the dropdown."
         ),
     }
 

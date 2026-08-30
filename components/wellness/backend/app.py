@@ -267,12 +267,23 @@ def api_classify_symptom():
     description ("my knees hurt and I feel stressed"), suggests a
     condition category to pre-fill the dropdown - NOT a replacement
     for the dropdown, an assistive shortcut.
+
+    Body: { "text": "...", "lang": "en"|"de"|"ru"|"zh"|"ja", "domain": "ayurveda"|"spiritual" }
+    "lang" selects which of the 5 dedicated per-language models to use
+    (each trained on its own native-language example data, not a
+    translation layer over a single English model). Defaults to "en".
+    "domain" selects which category set to predict from - "ayurveda" (12
+    medical/wellness conditions) or "spiritual" (6 meditation/retreat
+    types) - these are separate classifiers, not one shared model, since
+    the category sets don't overlap at all. Defaults to "ayurveda".
     """
     data = request.get_json(force=True)
     text = data.get("text", "").strip()
+    lang = data.get("lang", "en")
+    domain = data.get("domain", "ayurveda")
     if not text:
         return jsonify({"error": "text is required"}), 400
-    return jsonify(classify_symptom_text(text))
+    return jsonify(classify_symptom_text(text, lang, domain))
 
 
 @app.route("/api/predict-outcome", methods=["POST"])

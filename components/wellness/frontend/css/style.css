@@ -217,6 +217,10 @@
   .mic-btn.recording { background: var(--orange); border-color: var(--orange); color:white;
     animation: micPulse 1.2s infinite; }
   @keyframes micPulse { 0%, 100% { opacity:1; } 50% { opacity:0.6; } }
+  .voice-lang-chip { background:none; border:1.5px solid var(--line); color:var(--muted);
+    padding:4px 9px; border-radius:14px; cursor:pointer; font-size:0.72rem; font-weight:600; }
+  .voice-lang-chip:hover { background: rgba(47,167,154,0.08); }
+  .voice-lang-chip.active { background: var(--teal); border-color: var(--teal); color:white; }
 
   /* Detail page */
   #detailView { display:none; }

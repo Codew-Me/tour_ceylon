@@ -255,6 +255,13 @@ function tr(key) {
 const SPEECH_LANG_MAP = { en: "en-US", de: "de-DE", ru: "ru-RU", zh: "zh-CN", ja: "ja-JP" };
 window.VOICE_RECOGNITION = null;
 window.VOICE_RECORDING = false;
+window.VOICE_SPEAK_LANG = "en";  // explicitly chosen speaking language, defaults to English
+
+function setVoiceLang(lang, btn) {
+  window.VOICE_SPEAK_LANG = lang;
+  document.querySelectorAll(".voice-lang-chip").forEach(c => c.classList.remove("active"));
+  btn.classList.add("active");
+}
 
 // Script-based language detection on the TRANSCRIBED TEXT (not the audio
 // itself - Web Speech API has no true "detect any spoken language"
@@ -284,7 +291,13 @@ function toggleVoiceInput() {
   }
 
   const recognition = new SpeechRecognitionAPI();
-  recognition.lang = SPEECH_LANG_MAP[window.CURRENT_LANG] || "en-US";
+  // Uses the EXPLICITLY chosen speaking language (the chip row), not the
+  // current UI language - these can differ (e.g. UI in English, but the
+  // tourist wants to speak Japanese to switch to it). Web Speech API needs
+  // an accurate language hint BEFORE listening starts for good accuracy;
+  // guessing from the current UI language caused poor transcription when
+  // someone spoke a different language than whatever was last selected.
+  recognition.lang = SPEECH_LANG_MAP[window.VOICE_SPEAK_LANG] || "en-US";
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
 
@@ -299,13 +312,20 @@ function toggleVoiceInput() {
     document.getElementById("symptomText").value = transcript;
     resultEl.innerHTML = "";
 
-    // Auto-detect language from the transcript's script and switch the
-    // whole UI if it doesn't match what's currently selected - so someone
-    // speaking Japanese gets the rest of the wizard in Japanese too.
-    const detected = detectScriptLanguage(transcript);
-    if (detected && detected !== window.CURRENT_LANG) {
-      selectLanguage(detected);
+    // Switch the UI to the language the user explicitly said they'd speak
+    // in - guaranteed correct, not guessed. Script-detection is kept as a
+    // secondary safety check in case the transcript's script clearly
+    // contradicts the chosen chip (e.g. they forgot to change it).
+    const targetLang = window.VOICE_SPEAK_LANG;
+    if (targetLang !== window.CURRENT_LANG) {
+      selectLanguage(targetLang);
       resultEl.innerHTML = `<span style="color:var(--teal);">${tr("Switched language based on your voice input.")}</span>`;
+    } else {
+      const detected = detectScriptLanguage(transcript);
+      if (detected && detected !== window.CURRENT_LANG) {
+        selectLanguage(detected);
+        resultEl.innerHTML = `<span style="color:var(--teal);">${tr("Switched language based on your voice input.")}</span>`;
+      }
     }
   };
 
@@ -334,9 +354,13 @@ async function suggestConditionFromSymptom() {
   try {
     const res = await fetch("/api/classify-symptom", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text})
+      body: JSON.stringify({text, lang: window.VOICE_SPEAK_LANG || "en", domain: window.SELECTED_PATH || "ayurveda"})
     });
     const data = await res.json();
+    if (data.no_signal) {
+      resultEl.innerHTML = `<span style="color:var(--orange);">${tr("Couldn't match that to the selected language \u2014 check the 'Speaking in' chip matches what you typed/said, or use the dropdown instead.")}</span>`;
+      return;
+    }
     const select = document.getElementById("condition");
     const options = Array.from(select.options).map(o => o.value);
     if (options.includes(data.predicted_condition)) {
@@ -641,7 +665,7 @@ function renderResults(dosha, confidence, results) {
     const idx = i;
     html += `<div class="result-card"><div class="rank">MATCH #${i+1}</div>
       <h3><span class="cat-badge">${CATEGORY_ICON[r.category] || "&#127807;"}</span>${r.name}</h3>
-      <div class="meta">${r.category} &middot; ${r.price_tier} tier &middot; ${r.quality_source}</div>
+      <div class="meta">${r.category} &middot; ${r.price_tier} tier &middot; ${tr(r.quality_source)}</div>
       ${detectRiskFlags(r.reviews).length > 0 ? `<div class="risk-badge">&#9888; Reviewer caution noted &mdash; see details</div>` : ``}
       ${r.companion_match === 1.0 ? `<div class="companion-badge">&#128101; Also matches your companion's condition</div>` : ``}
       ${bar("Condition match", r.condition_pct, 35)}
@@ -650,10 +674,10 @@ function renderResults(dosha, confidence, results) {
       ${bar("Budget fit", r.budget_pct, 20)}
       <div class="total-match">Overall Match: ${r.match_pct}%</div>
       <div class="contact-row">
-        ${r.phone ? `<a class="contact-btn book-btn" href="tel:${r.phone.replace(/\s/g,'')}">&#128222; Book Now &middot; ${r.phone}</a>` : `<span class="contact-btn disabled">Phone not listed &mdash; use map to find contact</span>`}
-        ${r.lat && r.lng ? `<a class="contact-btn map-btn" href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank">&#128205; View on Map</a>` : ``}
+        ${r.phone ? `<a class="contact-btn book-btn" href="tel:${r.phone.replace(/\s/g,'')}">&#128222; ${tr("Book Now")} &middot; ${r.phone}</a>` : `<span class="contact-btn disabled">${tr("Phone not listed \u2014 use map to find contact")}</span>`}
+        ${r.lat && r.lng ? `<a class="contact-btn map-btn" href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank">&#128205; ${tr("View on Map")}</a>` : ``}
       </div>
-      <button class="detail-btn" onclick="showDetail(${idx})">View Full Details &rarr;</button>
+      <button class="detail-btn" onclick="showDetail(${idx})">${tr("View Full Details")} &rarr;</button>
     </div>`;
   });
   html += `</div><button class="restart-btn" onclick="restart()">&larr; Start Over</button>`;
@@ -784,6 +808,28 @@ const PHRASE_DICTIONARY = {
   "Find My Retreat": {de: "Mein Retreat finden", ru: "Найти ретрит", zh: "寻找静修", ja: "リトリートを見つける"},
   "Continue": {de: "Weiter", ru: "Далее", zh: "继续", ja: "次へ"},
   "Back": {de: "Zurück", ru: "Назад", zh: "返回", ja: "戻る"},
+  "Back to results": {de: "Zurück zu den Ergebnissen", ru: "Назад к результатам", zh: "\u8fd4\u56de\u7ed3\u679c", ja: "\u7d50\u679c\u306b\u623b\u308b"},
+  "Map View": {de: "Kartenansicht", ru: "Вид карты", zh: "\u5730\u56fe\u89c6\u56fe", ja: "\u5730\u56f3\u8868\u793a"},
+  "Your Matches on the Map": {de: "Ihre Treffer auf der Karte", ru: "Ваши совпадения на карте", zh: "\u5730\u56fe\u4e0a\u7684\u5339\u914d\u9879", ja: "\u5730\u56f3\u4e0a\u306e\u30de\u30c3\u30c1\u7d50\u679c"},
+  "Real map of Sri Lanka \u2014 tap a pin or list item for full details.": {
+    de: "Echte Karte von Sri Lanka \u2014 tippen Sie auf einen Pin oder Listeneintrag f\u00fcr Details.",
+    ru: "Реальная карта Шри-Ланки \u2014 нажмите на метку или пункт списка для подробностей.",
+    zh: "\u771f\u5b9e\u7684\u65af\u91cc\u5170\u5361\u5730\u56fe\u2014\u70b9\u51fb\u56fe\u9488\u6216\u5217\u8868\u9879\u67e5\u770b\u8be6\u7ec6\u4fe1\u606f\u3002",
+    ja: "\u30b9\u30ea\u30e9\u30f3\u30ab\u306e\u5b9f\u969b\u306e\u5730\u56f3\u2014\u30d4\u30f3\u307e\u305f\u306f\u30ea\u30b9\u30c8\u9805\u76ee\u3092\u30bf\u30c3\u30d7\u3057\u3066\u8a73\u7d30\u3092\u3054\u89a7\u304f\u3060\u3055\u3044\u3002"
+  },
+  "What If": {de: "Was w\u00e4re wenn", ru: "Что если", zh: "\u5982\u679c", ja: "\u3082\u3057\u3082"},
+  "Search for a match first to see your results plotted on the map.": {
+    de: "Suchen Sie zuerst nach einer \u00dcbereinstimmung, um Ihre Ergebnisse auf der Karte zu sehen.",
+    ru: "Сначала выполните поиск совпадений, чтобы увидеть результаты на карте.",
+    zh: "\u8bf7\u5148\u641c\u7d22\u5339\u914d\u9879\uff0c\u4ee5\u5728\u5730\u56fe\u4e0a\u67e5\u770b\u60a8\u7684\u7ed3\u679c\u3002",
+    ja: "\u307e\u305a\u30de\u30c3\u30c1\u3092\u691c\u7d22\u3057\u3066\u3001\u5730\u56f3\u4e0a\u306b\u7d50\u679c\u3092\u8868\u793a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+  },
+  "Run a search first, then come back to compare scenarios.": {
+    de: "F\u00fchren Sie zuerst eine Suche durch und kehren Sie dann zur\u00fcck, um Szenarien zu vergleichen.",
+    ru: "Сначала выполните поиск, затем вернитесь для сравнения сценариев.",
+    zh: "\u8bf7\u5148\u8fdb\u884c\u641c\u7d22\uff0c\u7136\u540e\u8fd4\u56de\u6b64\u5904\u6bd4\u8f83\u65b9\u6848\u3002",
+    ja: "\u307e\u305a\u691c\u7d22\u3092\u5b9f\u884c\u3057\u3001\u623b\u3063\u3066\u30b7\u30ca\u30ea\u30aa\u3092\u6bd4\u8f03\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+  },
   "Predicted Dosha": {de: "Vorhergesagtes Dosha", ru: "Предполагаемая доша", zh: "预测体质（多沙）", ja: "予測ドーシャ"},
   "confidence": {de: "Konfidenz", ru: "уверенность", zh: "置信度", ja: "信頼度"},
   "Compare Top 3 Matches": {de: "Top-3-Übereinstimmungen vergleichen", ru: "Сравнить топ-3 совпадения", zh: "比较前3个匹配", ja: "上位3件を比較"},
@@ -813,6 +859,92 @@ const PHRASE_DICTIONARY = {
   "Share This Match": {de: "Match teilen", ru: "Поделиться совпадением", zh: "分享此匹配", ja: "このマッチをシェア"},
   "Reviewer Caution": {de: "Hinweis von Rezensenten", ru: "Предупреждение из отзывов", zh: "评价提醒", ja: "レビューの注意事項"},
   "Estimate Trip Cost": {de: "Reisekosten schätzen", ru: "Оценить стоимость поездки", zh: "估算旅行费用", ja: "旅行費用を見積もる"},
+  "How do you usually sleep?": {de: "Wie schlafen Sie normalerweise?", ru: "Как вы обычно спите?", zh: "\u60a8\u901a\u5e38\u600e\u4e48\u7761\u89c9\uff1f", ja: "\u666e\u6bb5\u3069\u306e\u3088\u3046\u306b\u7720\u308a\u307e\u3059\u304b\uff1f"},
+  "Light sleeper, wake up easily": {de: "Leichter Schlaf, wache leicht auf", ru: "Чуткий сон, легко просыпаюсь", zh: "\u6d45\u7761\uff0c\u5bb9\u6613\u9192", ja: "\u6d45\u3044\u7761\u308a\u3067\u3059\u3050\u76ee\u304c\u899a\u3081\u307e\u3059"},
+  "Sleep okay, but get warm at night": {de: "Schlafe gut, werde aber nachts warm", ru: "Сплю нормально, но ночью становится жарко", zh: "\u7761\u5f97\u8fd8\u53ef\u4ee5\uff0c\u4f46\u591c\u91cc\u4f1a\u53d1\u70ed", ja: "\u7720\u308a\u306f\u307e\u3042\u307e\u3042\u3067\u3059\u304c\u591c\u306b\u6691\u304f\u306a\u308a\u307e\u3059"},
+  "Deep, heavy sleeper": {de: "Tiefer, fester Schlaf", ru: "Глубокий, крепкий сон", zh: "\u7761\u5f97\u5f88\u6c89", ja: "\u6df1\u3044\u7720\u308a\u3067\u3059"},
+  "How's your appetite?": {de: "Wie ist Ihr Appetit?", ru: "Какой у вас аппетит?", zh: "\u60a8\u7684\u98df\u6b32\u600e\u4e48\u6837\uff1f", ja: "\u98df\u6b32\u306f\u3069\u3046\u3067\u3059\u304b\uff1f"},
+  "Varies a lot day to day": {de: "Schwankt von Tag zu Tag stark", ru: "Сильно меняется день ото дня", zh: "\u6bcf\u5929\u53d8\u5316\u5f88\u5927", ja: "\u65e5\u3005\u5927\u304d\u304f\u5909\u5316\u3057\u307e\u3059"},
+  "Get hungry/irritable if I skip meals": {de: "Werde hungrig/gereizt, wenn ich Mahlzeiten auslasse", ru: "Становлюсь голодным/раздражительным, если пропускаю приёмы пищи", zh: "\u4e0d\u5403\u996d\u5c31\u4f1a\u997f/\u70e6\u8e81", ja: "\u98df\u4e8b\u3092\u629c\u304f\u3068\u7a7a\u8179\u3067\u30a4\u30e9\u30a4\u30e9\u3057\u307e\u3059"},
+  "Steady, can skip meals easily": {de: "Stabil, kann Mahlzeiten leicht auslassen", ru: "Стабильный, могу легко пропускать приёмы пищи", zh: "\u7a33\u5b9a\uff0c\u53ef\u4ee5\u8f7b\u6613\u4e0d\u5403\u996d", ja: "\u5b89\u5b9a\u3057\u3066\u3044\u3066\u3001\u98df\u4e8b\u3092\u629c\u3044\u3066\u3082\u5e73\u6c17\u3067\u3059"},
+  "Temperature preference?": {de: "Temperaturvorliebe?", ru: "Предпочтение по температуре?", zh: "\u6e29\u5ea6\u504f\u597d\uff1f", ja: "\u6c17\u6e29\u306e\u597d\u307f\u306f\uff1f"},
+  "I feel the cold easily": {de: "Mir ist leicht kalt", ru: "Мне легко становится холодно", zh: "\u6211\u5bb9\u6613\u611f\u5230\u51b7", ja: "\u5bd2\u3055\u3092\u611f\u3058\u3084\u3059\u3044\u3067\u3059"},
+  "I feel the heat easily": {de: "Mir ist leicht warm", ru: "Мне легко становится жарко", zh: "\u6211\u5bb9\u6613\u611f\u5230\u70ed", ja: "\u6691\u3055\u3092\u611f\u3058\u3084\u3059\u3044\u3067\u3059"},
+  "Doesn't bother me much": {de: "Stört mich nicht sehr", ru: "Меня это не сильно беспокоит", zh: "\u5bf9\u6211\u5f71\u54cd\u4e0d\u5927", ja: "\u3042\u307e\u308a\u6c17\u306b\u306a\u308a\u307e\u305b\u3093"},
+  "Under stress, you tend to...": {de: "Unter Stress neigen Sie dazu...", ru: "В стрессе вы склонны...", zh: "\u538b\u529b\u4e0b\uff0c\u60a8\u901a\u5e38\u4f1a...", ja: "\u30b9\u30c8\u30ec\u30b9\u3092\u611f\u3058\u308b\u3068\uff1f"},
+  "Worry or overthink": {de: "Sich sorgen oder zu viel nachdenken", ru: "Волноваться или слишком много думать", zh: "\u62c5\u5fc3\u6216\u60f3\u5f97\u592a\u591a", ja: "\u5fc3\u914d\u3057\u305f\u308a\u8003\u3048\u3059\u304e\u305f\u308a\u3057\u307e\u3059"},
+  "Get irritable or impatient": {de: "Werde gereizt oder ungeduldig", ru: "Становлюсь раздражительным или нетерпеливым", zh: "\u53d8\u5f97\u6613\u6012\u6216\u4e0d\u8010\u70e6", ja: "\u30a4\u30e9\u30a4\u30e9\u3057\u305f\u308a\u305b\u3063\u304b\u3061\u306b\u306a\u3063\u305f\u308a\u3057\u307e\u3059"},
+  "Stay calm, need a push to act": {de: "Bleibe ruhig, brauche einen Anstoß zum Handeln", ru: "Остаюсь спокойным, нужен толчок к действию", zh: "\u4fdd\u6301\u51b7\u9759\uff0c\u9700\u8981\u63a8\u52a8\u624d\u80fd\u884c\u52a8", ja: "\u843d\u3061\u7740\u3044\u3066\u3044\u307e\u3059\u304c\u3001\u884c\u52d5\u306b\u306f\u5f8c\u62bc\u3057\u304c\u5fc5\u8981\u3067\u3059"},
+  "Meditation experience?": {de: "Meditationserfahrung?", ru: "Опыт медитации?", zh: "\u51a5\u60f3\u7ecf\u9a8c\uff1f", ja: "\u77ac\u60f3\u306e\u7d4c\u9a13\u306f\uff1f"},
+  "Complete beginner": {de: "Absoluter Anfänger", ru: "Полный новичок", zh: "\u5b8c\u5168\u521d\u5b66\u8005", ja: "\u5168\u304f\u306e\u521d\u5fc3\u8005"},
+  "Practiced on and off": {de: "Unregelmäßig geübt", ru: "Практиковал время от времени", zh: "\u65f6\u65ad\u65f6\u7eed\u5730\u7ec3\u4e60\u8fc7", ja: "\u6642\u3005\u7d9a\u3051\u3066\u3044\u307e\u3059"},
+  "Regular, experienced practitioner": {de: "Regelmäßiger, erfahrener Praktizierender", ru: "Регулярный, опытный практик", zh: "\u957f\u671f\u7ec3\u4e60\u7684\u7ecf\u9a8c\u8005", ja: "\u5b9a\u671f\u7684\u306b\u884c\u3046\u7d4c\u9a13\u8005"},
+  "How intense a retreat are you looking for?": {de: "Wie intensiv soll der Retreat sein?", ru: "Насколько интенсивный ретрит вы ищете?", zh: "\u60a8\u5e0c\u671b\u4fee\u884c\u6709\u591a\u5f3a\u5ea6\uff1f", ja: "\u3069\u306e\u7a0b\u5ea6\u306e\u5f37\u5ea6\u306e\u30ea\u30c8\u30ea\u30fc\u30c8\u3092\u304a\u63a2\u3057\u3067\u3059\u304b\uff1f"},
+  "Gentle, relaxed pace": {de: "Sanftes, entspanntes Tempo", ru: "Мягкий, расслабленный темп", zh: "\u8f7b\u677e\u60a0\u95f2\u7684\u8282\u594f", ja: "\u7a4f\u3084\u304b\u3067\u30ea\u30e9\u30c3\u30af\u30b9\u3057\u305f\u30da\u30fc\u30b9"},
+  "Structured daily schedule": {de: "Strukturierter Tagesablauf", ru: "Структурированное расписание", zh: "\u6709\u7ec4\u7ec7\u7684\u65e5\u5e38\u65e5\u7a0b", ja: "\u6784\u9020\u5316\u3055\u308c\u305f\u65e5\u7a0b"},
+  "Intensive, immersive practice": {de: "Intensive, umfassende Praxis", ru: "Интенсивная, глубокая практика", zh: "\u6c89\u6d78\u5f0f\u5f3a\u5ea6\u7ec3\u4e60", ja: "\u96c6\u4e2d\u7684\u3067\u672c\u683c\u7684\u306a\u5b9f\u8df5"},
+  "How do you feel about silence?": {de: "Wie stehen Sie zu Stille?", ru: "Как вы относитесь к тишине?", zh: "\u60a8\u5bf9\u6c89\u9ed8\u7684\u770b\u6cd5\u662f\uff1f", ja: "\u6c88\u9ed9\u306b\u3064\u3044\u3066\u3069\u3046\u611f\u3058\u307e\u3059\u304b\uff1f"},
+  "I'd like some conversation/community": {de: "Ich hätte gerne etwas Austausch/Gemeinschaft", ru: "Хотел бы немного общения/сообщества", zh: "\u5e0c\u671b\u6709\u4e00\u4e9b\u4ea4\u6d41/\u793e\u533a\u6c1b\u56f4", ja: "\u5c11\u3057\u4f1a\u8a71\u3084\u30b3\u30df\u30e5\u30cb\u30c6\u30a3\u304c\u6b32\u3057\u3044\u3067\u3059"},
+  "Comfortable with quiet periods": {de: "Wohl mit ruhigen Phasen", ru: "Комфортно с периодами тишины", zh: "\u4e60\u60ef\u5b89\u9759\u65f6\u6bb5", ja: "\u9759\u304b\u306a\u6642\u9593\u3082\u5927\u4e08\u592b\u3067\u3059"},
+  "Seeking a fully silent retreat": {de: "Suche einen komplett stillen Retreat", ru: "Ищу полностью тихий ретрит", zh: "\u5bfb\u6c42\u5b8c\u5168\u9759\u9ed8\u7684\u4fee\u884c", ja: "\u5b8c\u5168\u306a\u6c88\u9ed9\u306e\u30ea\u30c8\u30ea\u30fc\u30c8\u3092\u63a2\u3057\u3066\u3044\u307e\u3059"},
+  "Preferred retreat length?": {de: "Bevorzugte Retreat-Dauer?", ru: "Предпочитаемая длительность ретрита?", zh: "\u60a8\u5e0c\u671b\u7684\u4fee\u884c\u65f6\u957f\uff1f", ja: "\u5e0c\u671b\u3059\u308b\u30ea\u30c8\u30ea\u30fc\u30c8\u306e\u9577\u3055\u306f\uff1f"},
+  "Short (1\u20133 days)": {de: "Kurz (1\u20133 Tage)", ru: "Короткий (1\u20133 дня)", zh: "\u77ed\u671f\uff081-3\u5929\uff09", ja: "\u77ed\u671f\uff081\u301c3\u65e5\uff09"},
+  "Medium (4\u201310 days)": {de: "Mittel (4\u201310 Tage)", ru: "Средний (4\u201310 дней)", zh: "\u4e2d\u671f\uff084-10\u5929\uff09", ja: "\u4e2d\u671f\uff084\u301c10\u65e5\uff09"},
+  "Extended (10+ days)": {de: "Verlängert (10+ Tage)", ru: "Продолжительный (10+ дней)", zh: "\u957f\u671f\uff0810\u5929\u4ee5\u4e0a\uff09", ja: "\u9577\u671f\uff0810\u65e5\u4ee5\u4e0a\uff09"},
+  "Bring copies of relevant medical records/diagnoses, if any": {de: "Bringen Sie ggf. Kopien relevanter Krankenakten/Diagnosen mit", ru: "Возьмите копии соответствующих медицинских записей/диагнозов, если есть", zh: "\u5982\u6709\u76f8\u5173\u75c5\u5386/\u8bca\u65ad\uff0c\u8bf7\u643a\u5e26\u526f\u672c", ja: "\u95a2\u9023\u3059\u308b\u533b\u7642\u8a18\u9332\u30fb\u8a3a\u65ad\u66f8\u304c\u3042\u308c\u3070\u30b3\u30d4\u30fc\u3092\u304a\u6301\u3061\u304f\u3060\u3055\u3044"},
+  "Pack loose, comfortable cotton clothing (oil-based treatments)": {de: "Packen Sie lockere, bequeme Baumwollkleidung ein (\u00f6lbasierte Behandlungen)", ru: "Возьмите свободную, удобную хлопковую одежду (процедуры на масляной основе)", zh: "\u643a\u5e26\u5bbd\u677e\u8212\u9002\u7684\u68c9\u8d28\u8863\u7269\uff08\u6cb9\u6027\u7597\u7a0b\uff09", ja: "\u3086\u3063\u305f\u308a\u3057\u305f\u5feb\u9069\u306a\u7dbf\u7d20\u6750\u306e\u670d\u3092\u3054\u7528\u610f\u304f\u3060\u3055\u3044\uff08\u30aa\u30a4\u30eb\u3092\u4f7f\u7528\u3059\u308b\u65bd\u8853\u306e\u305f\u3081\uff09"},
+  "Note any allergies (especially to nuts/sesame - common in oils)": {de: "Beachten Sie Allergien (besonders gegen N\u00fcsse/Sesam - h\u00e4ufig in \u00d6len)", ru: "Учтите аллергии (особенно на орехи/кунжут - часто в маслах)", zh: "\u6ce8\u610f\u8fc7\u654f\u6e90\uff08\u5c24\u5176\u662f\u575a\u679c/\u82dd\u9ebb\u2014\u2014\u6cb9\u4e2d\u5e38\u89c1\uff09", ja: "\u30a2\u30ec\u30eb\u30ae\u30fc\u306b\u3054\u6ce8\u610f\u304f\u3060\u3055\u3044\uff08\u7279\u306b\u30ca\u30c3\u30c4\u30fb\u30b4\u30de - \u30aa\u30a4\u30eb\u306b\u3088\u304f\u542b\u307e\u308c\u307e\u3059\uff09"},
+  "Avoid alcohol and heavy meals before treatment sessions": {de: "Vermeiden Sie Alkohol und schwere Mahlzeiten vor Behandlungssitzungen", ru: "Избегайте алкоголя и тяжёлой пищи перед процедурами", zh: "\u6cbb\u7597\u524d\u907f\u514d\u996e\u9152\u548c\u5403\u5f97\u8fc7\u9971", ja: "\u65bd\u8853\u524d\u306e\u30a2\u30eb\u30b3\u30fc\u30eb\u3084\u98df\u3079\u3059\u304e\u306f\u304a\u63a7\u3048\u304f\u3060\u3055\u3044"},
+  "Confirm with the center if follow-up consultations are included": {de: "Best\u00e4tigen Sie beim Zentrum, ob Nachsorgetermine enthalten sind", ru: "Уточните в центре, включены ли повторные консультации", zh: "\u5411\u4e2d\u5fc3\u786e\u8ba4\u662f\u5426\u5305\u542b\u540e\u7eed\u54a8\u8be2", ja: "\u30d5\u30a9\u30ed\u30fc\u30a2\u30c3\u30d7\u76f8\u8ac7\u304c\u542b\u307e\u308c\u3066\u3044\u308b\u304b\u30bb\u30f3\u30bf\u30fc\u306b\u3054\u78ba\u8a8d\u304f\u3060\u3055\u3044"},
+  "Pack loose, comfortable clothing for massage/spa sessions": {de: "Packen Sie lockere, bequeme Kleidung f\u00fcr Massage-/Spa-Sitzungen ein", ru: "Возьмите свободную, удобную одежду для массажа/спа-процедур", zh: "\u643a\u5e26\u5bbd\u677e\u8212\u9002\u7684\u8863\u7269\u7528\u4e8e\u6309\u6469/\u6c34\u7597", ja: "\u30de\u30c3\u30b5\u30fc\u30b8\u30fb\u30b9\u30d1\u306e\u305f\u3081\u306b\u3086\u3063\u305f\u308a\u3057\u305f\u5feb\u9069\u306a\u670d\u3092\u3054\u7528\u610f\u304f\u3060\u3055\u3044"},
+  "Stay hydrated - avoid heavy meals right before treatments": {de: "Bleiben Sie hydriert - vermeiden Sie schwere Mahlzeiten direkt vor Behandlungen", ru: "Пейте достаточно воды - избегайте тяжёлой пищи непосредственно перед процедурами", zh: "\u4fdd\u6301\u6c34\u5206\u5145\u8db3\u2014\u2014\u6cbb\u7597\u524d\u907f\u514d\u5403\u5f97\u8fc7\u9971", ja: "\u6c34\u5206\u88dc\u7d66\u3092\u5fc3\u304c\u3051\u3001\u65bd\u8853\u76f4\u524d\u306e\u98df\u3079\u3059\u304e\u306f\u907f\u3051\u3066\u304f\u3060\u3055\u3044"},
+  "Bring swimwear if the center has pools or outdoor baths": {de: "Bringen Sie Badekleidung mit, falls das Zentrum Pools oder Au\u00dfenb\u00e4der hat", ru: "Возьмите купальный костюм, если в центре есть бассейны или открытые ванны", zh: "\u5982\u679c\u4e2d\u5fc3\u6709\u6cf3\u6c60\u6216\u9732\u5929\u6d74\u6c60\uff0c\u8bf7\u643a\u5e26\u6cf3\u8863", ja: "\u30d7\u30fc\u30eb\u3084\u5c4b\u5916\u6d74\u5834\u304c\u3042\u308b\u5834\u5408\u306f\u6c34\u7740\u3092\u304a\u6301\u3061\u304f\u3060\u3055\u3044"},
+  "Note any skin sensitivities/allergies to oils in advance": {de: "Notieren Sie im Voraus Hautempfindlichkeiten/Allergien gegen \u00d6le", ru: "Заранее отметьте чувствительность кожи/аллергии на масла", zh: "\u63d0\u524d\u6ce8\u660e\u76ae\u80a4\u654f\u611f/\u5bf9\u6cb9\u7684\u8fc7\u654f\u60c5\u51b5", ja: "\u80cc\u306e\u654f\u611f\u3055\u3084\u30aa\u30a4\u30eb\u3078\u306e\u30a2\u30ec\u30eb\u30ae\u30fc\u306f\u4e8b\u524d\u306b\u304a\u77e5\u3089\u305b\u304f\u3060\u3055\u3044"},
+  "Pack modest, comfortable clothing (shoulders/knees covered)": {de: "Packen Sie dezente, bequeme Kleidung (Schultern/Knie bedeckt)", ru: "Возьмите скромную, удобную одежду (закрытые плечи/колени)", zh: "\u643a\u5e26\u6734\u7d20\u8212\u9002\u7684\u8863\u7269\uff08\u906e\u76d6\u80a9\u819c/\u819d\u76d6\uff09", ja: "\u63a7\u3048\u3081\u3067\u5feb\u9069\u306a\u670d\u88c5\u3092\u3054\u7528\u610f\u304f\u3060\u3055\u3044\uff08\u80a9\u30fb\u819d\u3092\u8986\u3046\u3082\u306e\uff09"},
+  "Many centers request silence - inform family of limited contact": {de: "Viele Zentren bitten um Stille - informieren Sie die Familie \u00fcber eingeschr\u00e4nkten Kontakt", ru: "Многие центры просят соблюдать тишину - предупредите семью об ограниченном контакте", zh: "\u8bb8\u591a\u4e2d\u5fc3\u8981\u6c42\u4fdd\u6301\u5b89\u9759\u2014\u2014\u8bf7\u544a\u77e5\u5bb6\u4eba\u8054\u7cfb\u4f1a\u53d7\u9650", ja: "\u591a\u304f\u306e\u30bb\u30f3\u30bf\u30fc\u3067\u306f\u9759\u5be2\u304c\u6c42\u3081\u3089\u308c\u307e\u3059 - \u3054\u5bb6\u65cf\u306b\u9023\u7d61\u304c\u5236\u9650\u3055\u308c\u308b\u3053\u3068\u3092\u304a\u4f1d\u3048\u304f\u3060\u3055\u3044"},
+  "Bring a light shawl/blanket for early morning meditation sessions": {de: "Bringen Sie einen leichten Schal/eine Decke f\u00fcr fr\u00fchmorgendliche Meditationssitzungen mit", ru: "Возьмите лёгкий шарф/плед для утренних медитаций", zh: "\u4e3a\u6e05\u6668\u51a5\u60f3\u8bfe\u7a0b\u643a\u5e26\u4e00\u6761\u8f7b\u62ab\u80a9/\u6bef\u5b50", ja: "\u65e9\u671d\u306e\u5091\u60f3\u30bb\u30c3\u30b7\u30e7\u30f3\u7528\u306b\u8584\u624b\u306e\u30b7\u30e7\u30fc\u30eb\u3084\u6bdb\u5e03\u3092\u304a\u6301\u3061\u304f\u3060\u3055\u3044"},
+  "Check if the center requires advance registration for multi-day courses": {de: "Pr\u00fcfen Sie, ob das Zentrum eine Voranmeldung f\u00fcr mehrt\u00e4gige Kurse erfordert", ru: "Уточните, требуется ли предварительная регистрация для многодневных курсов", zh: "\u786e\u8ba4\u4e2d\u5fc3\u662f\u5426\u9700\u8981\u4e3a\u591a\u65e5\u8bfe\u7a0b\u63d0\u524d\u767b\u8bb0", ja: "\u8907\u6570\u65e5\u30b3\u30fc\u30b9\u306f\u4e8b\u524d\u767b\u9332\u304c\u5fc5\u8981\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"},
+  "Mobile phones are often restricted during retreats - plan accordingly": {de: "Mobiltelefone sind w\u00e4hrend Retreats oft eingeschr\u00e4nkt - planen Sie entsprechend", ru: "Мобильные телефоны часто ограничены во время ретритов - планируйте заранее", zh: "\u9759\u4fee\u671f\u95f4\u624b\u673a\u4f7f\u7528\u901a\u5e38\u53d7\u9650\u2014\u2014\u8bf7\u63d0\u524d\u5b89\u6392", ja: "\u30ea\u30c8\u30ea\u30fc\u30c8\u4e2d\u306f\u643a\u5e2f\u96fb\u8a71\u306e\u4f7f\u7528\u304c\u5236\u9650\u3055\u308c\u308b\u3053\u3068\u304c\u591a\u3044\u3067\u3059 - \u3054\u8a08\u753b\u304f\u3060\u3055\u3044"},
+  "Phone not listed \u2014 use map to find contact": {de: "Telefon nicht angegeben \u2014 Karte f\u00fcr Kontakt verwenden", ru: "Телефон не указан \u2014 используйте карту для связи", zh: "\u672a\u5217\u51fa\u7535\u8bdd\u2014\u2014\u8bf7\u4f7f\u7528\u5730\u56fe\u67e5\u627e\u8054\u7cfb\u65b9\u5f0f", ja: "\u96fb\u8a71\u756a\u53f7\u306e\u8a18\u8f09\u306a\u3057\u2014\u5730\u56f3\u3067\u9023\u7d61\u5148\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"},
+  "View Full Details": {de: "Alle Details anzeigen", ru: "Посмотреть все детали", zh: "\u67e5\u770b\u5b8c\u6574\u8be6\u60c5", ja: "\u8a73\u7d30\u3092\u3059\u3079\u3066\u898b\u308b"},
+  "Personalized Outcome Likelihood": {de: "Personalisierte Erfolgswahrscheinlichkeit", ru: "Персонализированная вероятность результата", zh: "\u4e2a\u6027\u5316\u7597\u6548\u53ef\u80fd\u6027", ja: "\u30d1\u30fc\u30bd\u30ca\u30e9\u30a4\u30ba\u3055\u308c\u305f\u52b9\u679c\u306e\u898b\u8fbc\u307f"},
+  "Personalized for your profile (age": {de: "Personalisiert f\u00fcr Ihr Profil (Alter", ru: "Персонализировано для вашего профиля (возраст", zh: "\u4e3a\u60a8\u7684\u4e2a\u4eba\u6863\u6848\u5b9a\u5236\uff08\u5e74\u9f84", ja: "\u3042\u306a\u305f\u306e\u30d7\u30ed\u30d5\u30a3\u30fc\u30eb\u306b\u5408\u308f\u305b\u3066\u30d1\u30fc\u30bd\u30ca\u30e9\u30a4\u30ba\uff08\u5e74\u9f62"},
+  "dosha)": {de: "Dosha)", ru: "доша)", zh: "\u4f53\u8d28\uff09", ja: "\u30c9\u30fc\u30b7\u30e3\uff09"},
+  "Model accuracy:": {de: "Modellgenauigkeit:", ru: "Точность модели:", zh: "\u6a21\u578b\u51c6\u786e\u5ea6\uff1a", ja: "\u30e2\u30c7\u30eb\u7cbe\u5ea6\uff1a"},
+  "Not a clinical guarantee.": {de: "Keine klinische Garantie.", ru: "Не является клинической гарантией.", zh: "\u975e\u4e34\u5e8a\u4fdd\u8bc1\u3002", ja: "\u81e8\u5e8a\u7684\u4fdd\u8a3c\u3067\u306f\u3042\u308a\u307e\u305b\u3093\u3002"},
+  "NLP (real reviews)": {de: "NLP (echte Bewertungen)", ru: "NLP (реальные отзывы)", zh: "\u81ea\u7136\u8bed\u8a00\u5904\u7406\uff08\u771f\u5b9e\u8bc4\u4ef7\uff09", ja: "NLP\uff08\u5b9f\u969b\u306e\u30ec\u30d3\u30e5\u30fc\uff09"},
+  "Google Rating (fallback - insufficient review data)": {de: "Google-Bewertung (Fallback - unzureichende Bewertungsdaten)", ru: "Рейтинг Google (запасной вариант - недостаточно данных отзывов)", zh: "Google\u8bc4\u5206\uff08\u5907\u7528\u2014\u2014\u8bc4\u4ef7\u6570\u636e\u4e0d\u8db3\uff09", ja: "Google\u8a55\u4fa1\uff08\u30d5\u30a9\u30fc\u30eb\u30d0\u30c3\u30af - \u30ec\u30d3\u30e5\u30fc\u30c7\u30fc\u30bf\u4e0d\u8db3\uff09"},
+  "No individual reviews available for this center yet \u2014 quality score is based on Google's aggregate rating.": {
+    de: "F\u00fcr dieses Zentrum liegen noch keine Einzelbewertungen vor \u2014 die Qualit\u00e4tsbewertung basiert auf der Gesamtbewertung von Google.",
+    ru: "Для этого центра пока нет отдельных отзывов \u2014 оценка качества основана на общем рейтинге Google.",
+    zh: "\u8be5\u4e2d\u5fc3\u6682\u65e0\u4e2a\u4eba\u8bc4\u4ef7\u2014\u8d28\u91cf\u8bc4\u5206\u57fa\u4e8eGoogle\u7684\u7efc\u5408\u8bc4\u5206\u3002",
+    ja: "\u3053\u306e\u30bb\u30f3\u30bf\u30fc\u306e\u500b\u5225\u30ec\u30d3\u30e5\u30fc\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093\u2014\u54c1\u8cea\u30b9\u30b3\u30a2\u306fGoogle\u306e\u7dcf\u5408\u8a55\u4fa1\u306b\u57fa\u3065\u3044\u3066\u3044\u307e\u3059\u3002"
+  },
+  "View Details": {de: "Details anzeigen", ru: "Подробнее", zh: "\u67e5\u770b\u8be6\u60c5", ja: "\u8a73\u7d30\u3092\u898b\u308b"},
+  "No matches yet": {de: "Noch keine \u00dcbereinstimmungen", ru: "Пока нет совпадений", zh: "\u6682\u65e0\u5339\u914d\u9879", ja: "\u307e\u3060\u30de\u30c3\u30c1\u306f\u3042\u308a\u307e\u305b\u3093"},
+  "Direct Search": {de: "Direkte Suche", ru: "Прямой поиск", zh: "\u76f4\u63a5\u641c\u7d22", ja: "\u76f4\u63a5\u691c\u7d22"},
+  "Browse All Centers": {de: "Alle Zentren durchsuchen", ru: "Просмотреть все центры", zh: "\u6d4f\u89c8\u5168\u90e8\u4e2d\u5fc3", ja: "\u5168\u30bb\u30f3\u30bf\u30fc\u3092\u898b\u308b"},
+  "Already know where you want to go? Search directly \u2014 no profile matching needed.": {
+    de: "Wissen Sie bereits, wohin Sie m\u00f6chten? Suchen Sie direkt \u2014 kein Profilabgleich erforderlich.",
+    ru: "Уже знаете, куда хотите поехать? Ищите напрямую \u2014 без подбора профиля.",
+    zh: "\u5df2\u7ecf\u77e5\u9053\u60a8\u60f3\u53bb\u54ea\u91cc\u4e86\u5417\uff1f\u76f4\u63a5\u641c\u7d22\u2014\u65e0\u9700\u6863\u6848\u5339\u914d\u3002",
+    ja: "\u884c\u304d\u5148\u306f\u3082\u3046\u304a\u6c7a\u307e\u308a\u3067\u3059\u304b\uff1f\u30d7\u30ed\u30d5\u30a3\u30fc\u30eb\u30de\u30c3\u30c1\u30f3\u30b0\u4e0d\u8981\u3067\u76f4\u63a5\u691c\u7d22\u3067\u304d\u307e\u3059\u3002"
+  },
+  "Returning for treatment at a specific center, or recommended one by a friend? Find it here and go straight to contact details \u2014 this skips the personalized matching questions.": {
+    de: "Kehren Sie zu einem bestimmten Zentrum zur\u00fcck oder wurde Ihnen eines von einem Freund empfohlen? Finden Sie es hier und gelangen Sie direkt zu den Kontaktdaten \u2014 dies \u00fcberspringt die personalisierten Fragen.",
+    ru: "Возвращаетесь на лечение в конкретный центр, или его порекомендовал друг? Найдите его здесь и сразу перейдите к контактным данным \u2014 это пропускает персонализированные вопросы подбора.",
+    zh: "\u8981\u56de\u5230\u7279\u5b9a\u4e2d\u5fc3\u6cbb\u7597\uff0c\u6216\u670b\u53cb\u63a8\u8350\u4e86\u4e00\u5bb6\uff1f\u5728\u8fd9\u91cc\u67e5\u627e\u5e76\u76f4\u63a5\u83b7\u53d6\u8054\u7cfb\u4fe1\u606f\u2014\u8df3\u8fc7\u4e2a\u6027\u5316\u5339\u914d\u95ee\u9898\u3002",
+    ja: "\u7279\u5b9a\u306e\u30bb\u30f3\u30bf\u30fc\u3067\u306e\u6cbb\u7642\u306b\u623b\u308b\u65b9\u3001\u307e\u305f\u306f\u53cb\u4eba\u306b\u63a8\u85a6\u3055\u308c\u305f\u65b9\u306f\u3001\u3053\u3061\u3089\u304b\u3089\u76f4\u63a5\u9023\u7d61\u5148\u60c5\u5831\u3078\u2014\u30d1\u30fc\u30bd\u30ca\u30e9\u30a4\u30ba\u8cea\u554f\u3092\u30b9\u30ad\u30c3\u30d7\u3057\u307e\u3059\u3002"
+  },
+  "All": {de: "Alle", ru: "Все", zh: "\u5168\u90e8", ja: "\u3059\u3079\u3066"},
+  "Ayurveda Wellness": {de: "Ayurveda Wellness", ru: "Аюрведа и велнес", zh: "\u963f\u80b2\u5403\u9640\u517b\u751f", ja: "\u30a2\u30fc\u30e6\u30eb\u30f4\u30a7\u30fc\u30c0\u30fb\u30a6\u30a7\u30eb\u30cd\u30b9"},
+  "Meditation & Spiritual": {de: "Meditation & Spirituell", ru: "Медитация и духовность", zh: "\u51a5\u60f3\u4e0e\u7075\u4fee", ja: "\u77ac\u60f3\u30fb\u30b9\u30d4\u30ea\u30c1\u30e5\u30a2\u30eb"},
+  "Search by name or condition (e.g. 'Ayu Care', 'Negombo', 'Sciatica')...": {
+    de: "Nach Name oder Zustand suchen (z.B. 'Ayu Care', 'Negombo', 'Ischias')...",
+    ru: "Поиск по названию или состоянию (напр. 'Ayu Care', 'Негомбо', 'Ишиас')...",
+    zh: "\u6309\u540d\u79f0\u6216\u75c5\u75c7\u641c\u7d22\uff08\u4f8b\u5982\uff1a'Ayu Care'\u3001'\u5185\u5b81\u6ce2'\u3001'\u5750\u9aa8\u795e\u7ecf\u75db'\uff09...",
+    ja: "\u540d\u524d\u307e\u305f\u306f\u75c7\u72b6\u3067\u691c\u7d22\uff08\u4f8b\uff1a\u300cAyu Care\u300d\u3001\u300c\u30cd\u30b4\u30f3\u30dc\u300d\u3001\u300c\u5750\u9aa8\u795e\u7d4c\u75db\u300d\uff09..."
+  },
   "Browse all 83 centers": {de: "Alle 83 Zentren durchsuchen", ru: "Просмотреть все 83 центра", zh: "浏览全部83个中心", ja: "全83センターを見る"},
   "Browse all 83 centers \u2192": {de: "Alle 83 Zentren durchsuchen \u2192", ru: "Просмотреть все 83 центра \u2192", zh: "浏览全部83个中心 \u2192", ja: "全83センターを見る \u2192"},
   "A research-backed matching engine connecting tourists to verified Ayurvedic treatment centers and meditation retreats across Sri Lanka \u2014 personalized to what you're looking for.": {
@@ -841,6 +973,13 @@ const PHRASE_DICTIONARY = {
     ja: "\u3053\u306e\u30d6\u30e9\u30a6\u30b6\u3067\u306f\u97f3\u58f0\u5165\u529b\u304c\u30b5\u30dd\u30fc\u30c8\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u2014Chrome\u307e\u305f\u306fEdge\u3092\u4f7f\u7528\u3059\u308b\u304b\u3001\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
   },
   "Listening...": {de: "H\u00f6re zu...", ru: "\u0421\u043b\u0443\u0448\u0430\u044e...", zh: "\u6b63\u5728\u503e\u542c...", ja: "\u8074\u53d6\u4e2d..."},
+  "Speaking in:": {de: "Sprechen auf:", ru: "Говорю на:", zh: "\u8bed\u8a00:", ja: "\u8a71\u3059\u8a00\u8a9e:"},
+  "Couldn't match that to the selected language \u2014 check the 'Speaking in' chip matches what you typed/said, or use the dropdown instead.": {
+    de: "Konnte nicht mit der ausgew\u00e4hlten Sprache abgeglichen werden \u2014 pr\u00fcfen Sie, ob der 'Sprechen auf'-Chip zu Ihrer Eingabe passt, oder verwenden Sie das Dropdown-Men\u00fc.",
+    ru: "Не удалось сопоставить с выбранным языком \u2014 проверьте, что метка «Говорю на» совпадает с тем, что вы ввели/сказали, или используйте выпадающий список.",
+    zh: "\u65e0\u6cd5\u4e0e\u6240\u9009\u8bed\u8a00\u5339\u914d\u2014\u8bf7\u68c0\u67e5\u201c\u8bed\u8a00\u201d\u6807\u7b7e\u662f\u5426\u4e0e\u60a8\u8f93\u5165/\u8bf4\u7684\u5185\u5bb9\u4e00\u81f4\uff0c\u6216\u4f7f\u7528\u4e0b\u62c9\u83dc\u5355\u3002",
+    ja: "\u9078\u629e\u3057\u305f\u8a00\u8a9e\u3068\u4e00\u81f4\u3057\u307e\u305b\u3093\u3067\u3057\u305f\u2014\u300c\u8a71\u3059\u8a00\u8a9e\u300d\u306e\u9078\u629e\u304c\u5165\u529b\u5185\u5bb9\u3068\u5408\u3063\u3066\u3044\u308b\u304b\u78ba\u8a8d\u3059\u308b\u304b\u3001\u30c9\u30ed\u30c3\u30d7\u30c0\u30a6\u30f3\u3092\u4f7f\u7528\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+  },
   "Switched language based on your voice input.": {
     de: "Sprache basierend auf Ihrer Spracheingabe gewechselt.",
     ru: "Язык изменён на основе вашего голосового ввода.",
@@ -901,6 +1040,14 @@ function applyTranslations(lang) {
   const symptomInput = document.getElementById("symptomText");
   if (symptomInput && window.CURRENT_PATH_CONTENT) {
     symptomInput.placeholder = tr(window.CURRENT_PATH_CONTENT.symptomPlaceholder);
+  }
+  // Keep the voice speaking-language chip row in sync with the UI language
+  // switch (e.g. via the nav dropdown) so the two selectors never disagree.
+  window.VOICE_SPEAK_LANG = lang;
+  const chip = document.querySelector(`.voice-lang-chip[data-lang="${lang}"]`);
+  if (chip) {
+    document.querySelectorAll(".voice-lang-chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
   }
   translateVisibleText(lang);
 }
@@ -968,7 +1115,7 @@ function renderScenarioView() {
 
   const q = window.LAST_QUERY;
   if (!q) {
-    sv.innerHTML = `<span class="back-link" onclick="history.back()">&larr; Back</span><div class="no-results">Run a search first, then come back to compare scenarios.</div>`;
+    sv.innerHTML = `<span class="back-link" onclick="history.back()">&larr; ${tr("Back")}</span><div class="no-results">${tr("Run a search first, then come back to compare scenarios.")}</div>`;
     window.scrollTo({top:0, behavior:"smooth"});
     return;
   }
@@ -979,8 +1126,8 @@ function renderScenarioView() {
     `<option ${c === q.condition ? "selected" : ""}>${c}</option>`).join("");
 
   sv.innerHTML = `
-    <span class="back-link" onclick="history.back()">&larr; Back</span>
-    <div class="leaf-divider">${LEAF_SVG}<span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">What If</span>${LEAF_SVG}</div>
+    <span class="back-link" onclick="history.back()">&larr; ${tr("Back")}</span>
+    <div class="leaf-divider">${LEAF_SVG}<span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">${tr("What If")}</span>${LEAF_SVG}</div>
     <div class="browse-header"><h2>Try a Different Scenario</h2><p>Keep your wellness profile, tweak your trip details, and see how your matches change.</p></div>
     <div class="panel" style="margin-bottom:24px;">
       <div class="field"><label>Condition / reason for visit</label>
@@ -993,6 +1140,7 @@ function renderScenarioView() {
     </div>
     <div id="scenarioResults"></div>
   `;
+  translateVisibleText(window.CURRENT_LANG);
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
@@ -1129,7 +1277,7 @@ function renderCostView(idx) {
   const est = getCostEstimate(r.queried_condition, r.price_tier, travelers);
 
   window.CURRENT_COST_IDX = idx;
-  let html = `<span class="back-link" onclick="history.back()">&larr; Back</span>`;
+  let html = `<span class="back-link" onclick="history.back()">&larr; ${tr("Back")}</span>`;
   if (!est) {
     html += `<div class="no-results">Cost estimate not available for this condition yet.</div>`;
   } else {
@@ -1155,6 +1303,7 @@ function renderCostView(idx) {
   }
 
   cv.innerHTML = html;
+  translateVisibleText(window.CURRENT_LANG);
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
@@ -1186,7 +1335,7 @@ function renderMapView() {
 
   let listHtml = "";
   if (results.length === 0) {
-    listHtml = `<div class="no-results">Search for a match first to see your results plotted on the map.</div>`;
+    listHtml = `<div class="no-results">${tr("Search for a match first to see your results plotted on the map.")}</div>`;
   } else {
     results.forEach((r, i) => {
       listHtml += `<div class="map-list-item" onclick="showDetail(${i})">
@@ -1197,9 +1346,9 @@ function renderMapView() {
   }
 
   mv.innerHTML = `
-    <span class="back-link" onclick="history.back()">&larr; Back</span>
-    <div class="leaf-divider">${LEAF_SVG}<span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">Map View</span>${LEAF_SVG}</div>
-    <div class="browse-header"><h2>Your Matches on the Map</h2><p>Real map of Sri Lanka &mdash; tap a pin or list item for full details.</p></div>
+    <span class="back-link" onclick="history.back()">&larr; ${tr("Back")}</span>
+    <div class="leaf-divider">${LEAF_SVG}<span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">${tr("Map View")}</span>${LEAF_SVG}</div>
+    <div class="browse-header"><h2>${tr("Your Matches on the Map")}</h2><p>${tr("Real map of Sri Lanka \u2014 tap a pin or list item for full details.")}</p></div>
     <div class="map-layout">
       <div id="leafletMap" class="sl-map-svg"></div>
       <div class="map-list">${listHtml}</div>
@@ -1231,7 +1380,7 @@ function renderMapView() {
           iconAnchor: [15, 30]
         });
         const marker = L.marker([r.lat, r.lng], {icon: orangeIcon}).addTo(map);
-        marker.bindPopup(`<b>${r.name}</b><br>${r.district || r.category}<br><a href="#" onclick="showDetail(${i}); return false;">View Details &rarr;</a>`);
+        marker.bindPopup(`<b>${r.name}</b><br>${r.district || r.category}<br><a href="#" onclick="showDetail(${i}); return false;">${tr("View Details")} &rarr;</a>`);
         marker.on('click', () => marker.openPopup());
         bounds.push([r.lat, r.lng]);
       }
@@ -1240,9 +1389,10 @@ function renderMapView() {
       map.fitBounds(bounds, {padding: [40, 40], maxZoom: 12});
     }
   } else if (results.length === 0) {
-    document.getElementById("leafletMap").innerHTML = `<div class="no-results" style="padding:60px 20px;">No matches yet</div>`;
+    document.getElementById("leafletMap").innerHTML = `<div class="no-results" style="padding:60px 20px;">${tr("No matches yet")}</div>`;
   }
 
+  translateVisibleText(window.CURRENT_LANG);
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
@@ -1307,11 +1457,11 @@ function renderDetail(idx) {
   if (r.reviews && r.reviews.length > 0) {
     reviewsHtml = r.reviews.map(rev => `<div class="review-item">${rev}</div>`).join("");
   } else {
-    reviewsHtml = `<div class="no-reviews">No individual reviews available for this center yet &mdash; quality score is based on Google's aggregate rating.</div>`;
+    reviewsHtml = `<div class="no-reviews">${tr("No individual reviews available for this center yet \u2014 quality score is based on Google's aggregate rating.")}</div>`;
   }
 
   const html = `
-    <span class="back-link" onclick="hideDetail()">&larr; Back to results</span>
+    <span class="back-link" onclick="hideDetail()">&larr; ${tr("Back to results")}</span>
     <div class="detail-header">
       <h2><span class="cat-badge" style="background:rgba(255,255,255,0.18); width:38px; height:38px; font-size:1.15rem;">${icon}</span>${r.name}</h2>
       <div class="meta2">${r.category} &middot; ${r.price_tier} tier &middot; ${r.conditions_text}</div>
@@ -1400,24 +1550,24 @@ function renderDetail(idx) {
             <div style="font-size:0.7rem; color:var(--muted); margin-top:8px; font-style:italic;">Proof-of-concept estimate from a small case set &mdash; not a clinical guarantee. Loading personalized estimate...</div>
           </div>`;
         })() : ``}
-        ${hasMatch && r.queried_condition ? `<button class="detail-btn" onclick="showCostView(${window.CURRENT_RESULTS.indexOf(r)})">&#128176; Estimate Trip Cost &rarr;</button>` : ``}
+        ${hasMatch && r.queried_condition ? `<button class="detail-btn" onclick="showCostView(${window.CURRENT_RESULTS.indexOf(r)})">&#128176; ${tr("Estimate Trip Cost")} &rarr;</button>` : ``}
       </div>
       <div>
         <div class="detail-card">
           <h4>Review-Derived Quality Score</h4>
           <div style="font-size:2rem; font-weight:700; color:var(--orange);">${r.nlp_quality} <span style="font-size:1rem; color:var(--muted);">/ 5</span></div>
-          <div style="font-size:0.78rem; color:var(--muted); margin-top:6px;">${r.quality_source}</div>
+          <div style="font-size:0.78rem; color:var(--muted); margin-top:6px;">${tr(r.quality_source)}</div>
         </div>
         <div class="detail-card">
           <h4>Contact &amp; Location</h4>
           <div class="contact-row" style="margin-top:0;">
-            ${r.phone ? `<a class="contact-btn book-btn" href="tel:${r.phone.replace(/\s/g,'')}">&#128222; Book Now &middot; ${r.phone}</a>` : `<span class="contact-btn disabled">Phone not listed &mdash; use map to find contact</span>`}
-            ${r.lat && r.lng ? `<a class="contact-btn map-btn" href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank">&#128205; View on Map</a>` : ``}
+            ${r.phone ? `<a class="contact-btn book-btn" href="tel:${r.phone.replace(/\s/g,'')}">&#128222; ${tr("Book Now")} &middot; ${r.phone}</a>` : `<span class="contact-btn disabled">${tr("Phone not listed \u2014 use map to find contact")}</span>`}
+            ${r.lat && r.lng ? `<a class="contact-btn map-btn" href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank">&#128205; ${tr("View on Map")}</a>` : ``}
           </div>
-          <button class="detail-btn" onclick="shareMatch('${r.name.replace(/'/g, "\'")}', ${r.match_pct || 0}, '${(r.phone||'').replace(/'/g, "\'")}')">&#128228; Share This Match</button>
+          <button class="detail-btn" onclick="shareMatch('${r.name.replace(/'/g, "\'")}', ${r.match_pct || 0}, '${(r.phone||'').replace(/'/g, "\'")}')">&#128228; ${tr("Share This Match")}</button>
         </div>
         <div class="detail-card">
-          <h4>&#128203; Before You Go</h4>
+          <h4>&#128203; ${tr("Before You Go")}</h4>
           <ul style="margin:0; padding-left:20px; font-size:0.82rem; color:var(--ink); line-height:1.9;">
             ${getChecklist(r.category).map(item => `<li>${item}</li>`).join("")}
           </ul>
@@ -1489,6 +1639,7 @@ function showDetail(idx, push=true) {
   renderDetail(idx);
   loadPersonalizedOutcome(idx);
   loadSafetyCheck(idx);
+  translateVisibleText(window.CURRENT_LANG);
   if (push) history.pushState({type:"detail", idx, results: window.CURRENT_RESULTS}, "", "");
 }
 
@@ -1538,10 +1689,10 @@ async function loadPersonalizedOutcome(idx) {
     const data = await res.json();
     if (data.personalized) {
       card.innerHTML = `
-        <h4>Personalized Outcome Likelihood</h4>
+        <h4>${tr("Personalized Outcome Likelihood")}</h4>
         <div style="font-size:1.4rem; font-weight:700; color:var(--orange);">~${data.predicted_outcome_pct}%</div>
-        <div style="font-size:0.76rem; color:var(--muted); margin-top:6px;">Personalized for your profile (age ${q.age}, ${q.dosha} dosha)</div>
-        <div style="font-size:0.7rem; color:var(--muted); margin-top:8px; font-style:italic;">${data.basis}. Model accuracy: ${data.model_accuracy}. Not a clinical guarantee.</div>
+        <div style="font-size:0.76rem; color:var(--muted); margin-top:6px;">${tr("Personalized for your profile (age")} ${q.age}, ${q.dosha} ${tr("dosha)")}</div>
+        <div style="font-size:0.7rem; color:var(--muted); margin-top:8px; font-style:italic;">${data.basis}. ${tr("Model accuracy:")} ${data.model_accuracy}. ${tr("Not a clinical guarantee.")}</div>
       `;
     }
     // If not personalized (condition outside training anchors), the static card already shown stays as-is.
@@ -1590,22 +1741,23 @@ function renderBrowse(query, categoryFilter) {
   }
 
   bv.innerHTML = `
-    <span class="back-link" onclick="history.back()">&larr; Back</span>
-    <div class="leaf-divider"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20 C4 12 9 6 20 4 C18 15 12 20 4 20 Z"/><path d="M4 20 C9 15 13 11 18 6"/></svg><span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">Direct Search</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20 C4 12 9 6 20 4 C18 15 12 20 4 20 Z"/><path d="M4 20 C9 15 13 11 18 6"/></svg></div>
+    <span class="back-link" onclick="history.back()">&larr; ${tr("Back")}</span>
+    <div class="leaf-divider"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20 C4 12 9 6 20 4 C18 15 12 20 4 20 Z"/><path d="M4 20 C9 15 13 11 18 6"/></svg><span style="font-size:0.78rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">${tr("Direct Search")}</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20 C4 12 9 6 20 4 C18 15 12 20 4 20 Z"/><path d="M4 20 C9 15 13 11 18 6"/></svg></div>
     <div class="browse-header">
-      <h2>Browse All Centers</h2>
-      <p>Already know where you want to go? Search directly &mdash; no profile matching needed.</p>
+      <h2>${tr("Browse All Centers")}</h2>
+      <p>${tr("Already know where you want to go? Search directly \u2014 no profile matching needed.")}</p>
     </div>
-    <div class="browse-note">Returning for treatment at a specific center, or recommended one by a friend? Find it here and go straight to contact details &mdash; this skips the personalized matching questions.</div>
+    <div class="browse-note">${tr("Returning for treatment at a specific center, or recommended one by a friend? Find it here and go straight to contact details \u2014 this skips the personalized matching questions.")}</div>
     <div class="browse-tabs">
-      <button class="browse-tab ${categoryFilter==='all'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'all')">All (${POOL.length})</button>
-      <button class="browse-tab ${categoryFilter==='ayurveda'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'ayurveda')">&#127807; Ayurveda Wellness (${POOL.filter(c=>c.category!=='Spiritual/Meditation').length})</button>
-      <button class="browse-tab ${categoryFilter==='spiritual'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'spiritual')">&#128330; Meditation &amp; Spiritual (${POOL.filter(c=>c.category==='Spiritual/Meditation').length})</button>
+      <button class="browse-tab ${categoryFilter==='all'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'all')">${tr("All")} (${POOL.length})</button>
+      <button class="browse-tab ${categoryFilter==='ayurveda'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'ayurveda')">&#127807; ${tr("Ayurveda Wellness")} (${POOL.filter(c=>c.category!=='Spiritual/Meditation').length})</button>
+      <button class="browse-tab ${categoryFilter==='spiritual'?'active':''}" onclick="filterBrowse(document.getElementById('browseSearch').value, 'spiritual')">&#128330; ${tr("Meditation & Spiritual")} (${POOL.filter(c=>c.category==='Spiritual/Meditation').length})</button>
     </div>
-    <input type="text" class="search-box" id="browseSearch" placeholder="Search by name or condition (e.g. 'Ayu Care', 'Negombo', 'Sciatica')..." value="${query || ''}" oninput="filterBrowse(this.value)">
+    <input type="text" class="search-box" id="browseSearch" placeholder="${tr("Search by name or condition (e.g. 'Ayu Care', 'Negombo', 'Sciatica')...")}" value="${query || ''}" oninput="filterBrowse(this.value)">
     <div class="browse-list">${itemsHtml}</div>
   `;
   document.getElementById("browseSearch").focus();
+  translateVisibleText(window.CURRENT_LANG);
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
