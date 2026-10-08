@@ -156,3 +156,4 @@ deployment.
 
 Send the entire `tour_ceylon_project/` folder (zipped). They only need to follow
 "How to Run" above — everything (data, model training data, images) is self-contained.
+

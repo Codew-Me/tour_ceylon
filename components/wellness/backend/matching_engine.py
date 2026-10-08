@@ -569,7 +569,7 @@ def classify_symptom_text(text, lang="en", domain="ayurveda"):
 # personalized prediction based on age, dosha, condition, and planned
 # duration. Trained on 6 real domain-expert case anchors (Ayya's
 # documented patients) + 48 expert-informed augmented variations (54
-# total). LOO-CV: MAE=4.7 percentage points, R²=0.624 (Random Forest).
+# total). LOO-CV metrics are saved in the .pkl by the training notebook.
 _outcome_model_cache = None
 
 def _load_outcome_predictor():
@@ -610,5 +610,10 @@ def predict_outcome_personalized(age, dosha, condition, duration_days):
         "predicted_outcome_pct": round(float(pred), 1),
         "personalized": True,
         "basis": f"Trained on {saved['n_real_cases']} real case anchors + {saved['n_augmented']} expert-informed augmented variations",
-        "model_accuracy": "MAE=4.7 percentage points, R\u00b2=0.624 (Leave-One-Out CV)",
+        # Metrics are computed during training (scripts/Component4_Model_Training.ipynb)
+        # and stored inside the .pkl - not typed into the code.
+        "model_accuracy": (
+            f"MAE={saved['loo_mae']:.1f} percentage points, R\u00b2={saved['loo_r2']:.3f} (Leave-One-Out CV)"
+            if "loo_mae" in saved else "Not recorded - retrain with the training notebook"
+        ),
     }
